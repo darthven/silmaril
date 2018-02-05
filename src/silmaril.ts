@@ -35,8 +35,11 @@ class SilNode<T> {
      */
     _next: SilNode<T>
 
-    constructor(value: T) {
+    constructor(value: T, depth?: number, index?: number) {
         this._value = value
+        this._depth = depth
+        this._index = index
+        this._children = []
     }
 }
 
@@ -70,8 +73,16 @@ export default class Silmaril<T> {
      */
     private _levels: Map<number, SilNode<T>[]>
 
-    constructor() {               
+    constructor() {        
         this._levels = new Map<number, SilNode<T>[]>()
+    }
+
+    get root(): SilNode<T> {
+        return this._root
+    }
+
+    get levels(): Map<number, SilNode<T>[]> {
+        return this._levels
     }
 
     /**
@@ -87,8 +98,8 @@ export default class Silmaril<T> {
      * @param depth of the node
      * @param index of the node
      */
-    public getNode(level: number, index: number): SilNode<T> {
-        return this.getLevelNodes(level).find((node: SilNode<T>) => node._index === index)
+    public getNode(depth: number, index: number): SilNode<T> {        
+        return this.getLevelNodes(depth).find((node: SilNode<T>) => node._index === index)
     }
 
     /**
@@ -118,25 +129,105 @@ export default class Silmaril<T> {
      * @param depth 
      * @param index 
      */
-    public addNodes(values: T[], depth?: number, index?: number) {
+    public addNodes(values: T[], depth?: number, index?: number): void {
         values.forEach(value => this.addNode(value, depth, index))
     }
-    
+
     /**
+     * Function that removes the concrete node with all its children from silmaril
+     * @param depth 
+     * @param index 
+     */
+    public removeNode(depth: number, index: number): void {
+        const nodeToRemove = this.getNode(depth, index)      
+        if(nodeToRemove) {
+            if(this._root === nodeToRemove) {
+                this._root = null
+                this._levels = new Map<number, SilNode<T>[]>()
+            } else {
+                const parentNode = this.getLevelNodes(depth - 1).find(parent => parent._children.includes(nodeToRemove)) 
+                if(parentNode && parentNode._children && parentNode._children[index]) {
+                    parentNode._children.splice(index, 1)                    
+                }              
+                const source = [...this.getLevelNodes(depth)]    
+                source.splice(index, 1)
+                this._levels.set(depth, source)               
+                this.updateIndexes(depth)
+                if(nodeToRemove._children) {
+                    nodeToRemove._children.forEach((child) => {
+                        this.removeNode(child._depth, child._index)
+                    })
+                }             
+            }           
+        }     
+    }    
+
+    /**
+     * Function that removes all silmaril nodes from the concrete depth from one position to another
+     * @param depth 
+     * @param startIndex position, from which deletion starts (includes while removing)
+     * @param endIndex position, until which the deletion will continue (not includes while removing)
+     */
+    public removeNodes(depth: number, startIndex: number, endIndex: number): void {
+        const level = this.getLevelNodes(depth)
+        if(level) {
+            for(let index = startIndex; index < endIndex; index++) {               
+                this.removeNode(depth, 0)            
+            }       
+        }      
+    }
+
+    /**
+     * Function that removes all silmaril nodes from the concrete depth
+     * @param depth 
+     */
+    public clearLevel(depth: number): void {
+        const level = this.getLevelNodes(depth)
+        if(level) {
+            for(let index = 0; index < level.length; index++) {               
+                this.removeNode(depth, 0)                     
+            }     
+        }
+    }
+
+    /**
+     * TODO NEED TO UPGRADE THIS
+     * @param depth 
+     * @param index 
+     * @param values 
+     */
+    public replaceNode(depth: number, index: number, values: T[]): void {       
+       this.removeNode(depth, index)
+       const newNode = new SilNode(values[0], depth, index)      
+       newNode._children = values.slice(1, values.length).map((value, index) => {
+            return new SilNode<T>(value, index, depth + 1)
+       })
+       this.insertNode(depth, index, newNode)       
+    }
+
+    /**
+     * TODO NEED TO UPGRADE THIS
      * Function that updates the concrete level of the silmaril nodes
      *  by inserting new node to the defined position
      * @param depth of the silmaril
      * @param index position where the node will be inserted
      * @param newChild the node
      */
-    private updateLevel(depth: number, index: number, newChild: SilNode<T>) {            
+    private insertNode(depth: number, index: number, node: SilNode<T>): void {
+        // const formerNode = this.getNode(depth, index)      
         if(this.getLevelNodes(depth)) {
+            // const parent = this.getLevelNodes(depth - 1).find(n => n._children.includes(formerNode))
+            // this.getLevelNodes(depth - 1).find(n => n._children.includes(formerNode))._children 
+            //     .splice(parent._children.indexOf(formerNode), 0, node)
             const source = [...this.getLevelNodes(depth)]    
-            source.splice(index, 0, newChild);
+            source.splice(index, 0, node);
             this._levels.set(depth, source)
         } else {
-            this._levels.set(depth, [newChild])
+            this._levels.set(depth, [node])
         } 
+        if(node._children) {
+            node._children.forEach(child => this.addNewNode(child._value, node))
+        }
     }
 
     /**
@@ -152,7 +243,7 @@ export default class Silmaril<T> {
         if(!this._root) {            
             newNode._index = newNode._depth = 0                 
             this._root = newNode        
-            this.updateLevel(newNode._depth, 0, newNode)                                     
+            this.insertNode(newNode._depth, 0, newNode)                                     
         } else {           
             if(destNode) {                   
                 destNode._children.push(newNode)                              
@@ -160,18 +251,22 @@ export default class Silmaril<T> {
                 newNode._index = (this.getLevelNodes(newNode._depth)) 
                     ? this.getLevelNodes(newNode._depth).length 
                     : destNode._children.length - 1 
-                this.updateLevel(newNode._depth, newNode._index, newNode)          
+                this.insertNode(newNode._depth, newNode._index, newNode)          
             } else {
                 this._root._children.push(newNode)             
                 newNode._depth = this._root._depth + 1   
                 newNode._index = this._root._children.length - 1                     
-                this.updateLevel(newNode._depth, newNode._index, newNode)                             
+                this.insertNode(newNode._depth, newNode._index, newNode)                             
             }         
         }     
+    }   
+
+    /**
+     * Function that upgrades all silmaril nodes indexes according to their level's position
+     * @param depth 
+     */
+    private updateIndexes(depth: number): void {
+        this.getLevelNodes(depth).map((node: SilNode<T>, index: number) => node._index = index)
     }
 }
-
-
-
-
 
